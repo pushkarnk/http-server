@@ -10,6 +10,8 @@ class TCPSocket {
     //start 
     public init?() {
         listenSocket = socket(AF_INET, Int32(SOCK_STREAM.rawValue), Int32(IPPROTO_TCP))
+        var on: Int = 1
+        setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int>.size))
         guard listenSocket > 0 else { return nil }
         let sa = sockaddr_in(sin_family: sa_family_t(AF_INET), sin_port: htons(21961), sin_addr: in_addr(s_addr: INADDR_ANY), sin_zero: (0,0,0,0,0,0,0,0))
         socketAddress.initialize(to: sa)
@@ -43,6 +45,8 @@ class TCPSocket {
    
     //write to socket 
     public func writeData(data: String) {
+        var bytes = Array(data.utf8)
+        write(connectionSocket, &bytes, data.utf8.count) 
     }
 
     //shutdown
@@ -55,5 +59,6 @@ class TCPSocket {
 if let tcpSocket = TCPSocket() {
     tcpSocket.acceptConnection()
     print(tcpSocket.readData())
+    tcpSocket.writeData(data: "HTTP/1.1 200 OK\r\n\r\nHello\r\n")
     tcpSocket.shutdown()
 }
