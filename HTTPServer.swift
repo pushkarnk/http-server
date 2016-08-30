@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import Glibc
 
 struct HTTPUtils {
@@ -10,44 +11,54 @@ struct HTTPUtils {
 
 class TCPSocket {
   
-    private let listenSocket: Int32
+    private var listenSocket: Int32!
     private var socketAddress = UnsafeMutablePointer<sockaddr_in>.allocate(capacity: 1) 
     private var connectionSocket: Int32!
+    
+    private func isNotNegative(r: CInt) -> Bool {
+        return r != -1
+    }
 
-    init?() {
-        listenSocket = socket(AF_INET, Int32(SOCK_STREAM.rawValue), Int32(IPPROTO_TCP))
+    private func isZero(r: CInt) -> Bool {
+        return r == 0
+    }
+
+    private func attempt(_ name: String, file: String = #file, line: UInt = #line, valid: (CInt) -> Bool,  _ b: @autoclosure () -> CInt) throws -> CInt {
+        let r = b()
+        guard valid(r) else { throw ServerError(operation: name, errno: r, file: file, line: line) }
+        return r
+    }
+
+    init(port: UInt16) throws {
+        listenSocket = try attempt("socket", valid: isNotNegative, socket(AF_INET, Int32(SOCK_STREAM.rawValue), Int32(IPPROTO_TCP))) 
         var on: Int = 1
-        setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int>.size))
-        guard listenSocket > 0 else { return nil }
-        let sa = sockaddr_in(sin_family: sa_family_t(AF_INET), sin_port: htons(21961), sin_addr: in_addr(s_addr: INADDR_ANY), sin_zero: (0,0,0,0,0,0,0,0))
+        _ = try attempt("setsockopt", valid: isZero, setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int>.size)))
+        let sa = sockaddr_in(sin_family: sa_family_t(AF_INET), sin_port: htons(port), sin_addr: in_addr(s_addr: INADDR_ANY), sin_zero: (0,0,0,0,0,0,0,0))
         socketAddress.initialize(to: sa)
-        socketAddress.withMemoryRebound(to: sockaddr.self, capacity: MemoryLayout<sockaddr>.size, { 
+        try socketAddress.withMemoryRebound(to: sockaddr.self, capacity: MemoryLayout<sockaddr>.size, { 
             let addr = UnsafePointer<sockaddr>($0)
-            bind(listenSocket, addr, socklen_t(MemoryLayout<sockaddr>.size))
+            _ = try attempt("bind", valid: isZero, bind(listenSocket, addr, socklen_t(MemoryLayout<sockaddr>.size)))
         })
     }
 
-    func acceptConnection() {
-        listen(listenSocket, SOMAXCONN)
-        socketAddress.withMemoryRebound(to: sockaddr.self, capacity: MemoryLayout<sockaddr>.size, {
+    func acceptConnection() throws {
+        _ = try attempt("listen", valid: isZero, listen(listenSocket, SOMAXCONN))
+        try socketAddress.withMemoryRebound(to: sockaddr.self, capacity: MemoryLayout<sockaddr>.size, {
             let addr = UnsafeMutablePointer<sockaddr>($0)
             var sockLen = socklen_t(MemoryLayout<sockaddr>.size) 
-            connectionSocket = accept(listenSocket, addr, &sockLen)
+            connectionSocket = try attempt("accept", valid: isNotNegative, accept(listenSocket, addr, &sockLen))
         })
     }
  
-    func readData() -> String? {
+    func readData() throws -> String {
         var buffer = [UInt8](repeating: 0, count: 4096)
-        let n = read(connectionSocket, &buffer, 4096)
-        if n <= 0 {
-            return nil
-        }
+        _ = try attempt("read", valid: isNotNegative, CInt(read(connectionSocket, &buffer, 4096)))
         return String(cString: &buffer)
     }
    
-    func writeData(data: String) {
+    func writeData(data: String) throws {
         var bytes = Array(data.utf8)
-        write(connectionSocket, &bytes, data.utf8.count) 
+        _  = try attempt("write", valid: isNotNegative, CInt(write(connectionSocket, &bytes, data.utf8.count))) 
     }
 
     func shutdown() {
@@ -60,30 +71,28 @@ class HTTPServer {
 
     let socket: TCPSocket 
     
-    init?() {
-        if let s = TCPSocket() {
-            socket = s
-        } else { return nil }
+    init(port: UInt16) throws {
+        socket = try TCPSocket(port: port)
     }
 
-    public class func create() -> HTTPServer? {
-        return HTTPServer()
+    public class func create(port: UInt16) throws -> HTTPServer {
+        return try HTTPServer(port: port)
     }
 
-    public func listen() {
-        socket.acceptConnection()
+    public func listen() throws {
+        try socket.acceptConnection()
     }
 
     public func stop() {
         socket.shutdown()
     }
    
-    public func request() -> HTTPRequest {
-       return HTTPRequest(request: socket.readData()!) 
+    public func request() throws -> HTTPRequest {
+       return HTTPRequest(request: try socket.readData()) 
     }
 
-    public func respond(with response: HTTPResponse) {
-        socket.writeData(data: response.description)
+    public func respond(with response: HTTPResponse) throws {
+        try socket.writeData(data: response.description)
     } 
 }
 
@@ -128,16 +137,20 @@ struct HTTPResponse {
     }
 }
 
-class TestURLSessionServer {
+public class TestURLSessionServer {
     let capitals: [String:String] = ["Nepal":"Kathmandu", "Peru":"Lima", "Italy":"Rome", "USA":"Washington, D.C"]
-    let httpServer: HTTPServer = HTTPServer.create()!
-
-    public func start() {
-        httpServer.listen()
+    let httpServer: HTTPServer
+    
+    public init (port: UInt16) throws {
+        httpServer = try HTTPServer.create(port: port)
+    }
+    public func start(started: DispatchSemaphore) throws {
+        started.signal()
+        try httpServer.listen()
     }
    
-    public func readAndRespond() {
-        httpServer.respond(with: process(request: httpServer.request()))
+    public func readAndRespond() throws {
+        try httpServer.respond(with: process(request: httpServer.request()))
     } 
 
     func process(request: HTTPRequest) -> HTTPResponse {
@@ -151,8 +164,26 @@ class TestURLSessionServer {
     func getResponse(uri: String) -> HTTPResponse {
         return HTTPResponse(response: .OK, body: capitals[String(uri.characters.dropFirst())]!) 
     }
+
+    func stop() {
+        httpServer.stop()
+    }
 }
 
-let test = TestURLSessionServer()
-test.start()
-test.readAndRespond()
+struct ServerError : Error {
+    let operation: String
+    let errno: CInt
+    let file: String
+    let line: UInt
+    var _code: Int { return Int(errno) }
+    var _domain: String { return NSPOSIXErrorDomain }
+}
+
+
+extension ServerError : CustomStringConvertible {
+    var description: String {
+        let s = String(validatingUTF8: strerror(errno)) ?? ""
+        return "\(operation) failed: \(s) (\(_code))"
+    }
+}
+
