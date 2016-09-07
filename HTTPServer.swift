@@ -133,12 +133,13 @@ struct HTTPResponse {
    
     public var description: String {
         let statusLine = HTTPUtils.VERSION + HTTPUtils.SPACE + "\(responseCode.rawValue)" + HTTPUtils.SPACE + "\(responseCode)"
-        return statusLine + HTTPUtils.CRLF2 + body
+        return statusLine + HTTPUtils.CRLF + headers + HTTPUtils.CRLF2 + body
     }
 }
 
 public class TestURLSessionServer {
-    let capitals: [String:String] = ["Nepal":"Kathmandu", "Peru":"Lima", "Italy":"Rome", "USA":"Washington, D.C"]
+    var capitals: [String:String] = ["Nepal":"Kathmandu", "Peru":"Lima", "Italy":"Rome", "USA":"Washington, D.C", "hello.txt":"This is sample content"]
+
     let httpServer: HTTPServer
     
     public init (port: UInt16) throws {
@@ -162,6 +163,10 @@ public class TestURLSessionServer {
     }
 
     func getResponse(uri: String) -> HTTPResponse {
+        if uri == "/hello.txt" {
+            let text = capitals[String(uri.characters.dropFirst())]!
+            return HTTPResponse(response: .OK, headers: "Content-Length: \(text.characters.count)", body: text)
+        }
         return HTTPResponse(response: .OK, body: capitals[String(uri.characters.dropFirst())]!) 
     }
 
