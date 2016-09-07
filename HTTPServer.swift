@@ -7,6 +7,7 @@ struct HTTPUtils {
     static let VERSION = "HTTP/1.1"
     static let SPACE = " "
     static let CRLF2 = CRLF + CRLF
+    static let EMPTY = ""
 }
 
 class TCPSocket {
@@ -125,7 +126,7 @@ struct HTTPResponse {
     private let headers: String
     private let body: String
 
-    public init(response: Response, headers: String = "", body: String) {
+    public init(response: Response, headers: String = HTTPUtils.EMPTY, body: String) {
         self.responseCode = response
         self.headers = headers
         self.body = body
@@ -133,7 +134,7 @@ struct HTTPResponse {
    
     public var description: String {
         let statusLine = HTTPUtils.VERSION + HTTPUtils.SPACE + "\(responseCode.rawValue)" + HTTPUtils.SPACE + "\(responseCode)"
-        return statusLine + HTTPUtils.CRLF + headers + HTTPUtils.CRLF2 + body
+        return statusLine + (headers != HTTPUtils.EMPTY ? HTTPUtils.CRLF + headers : HTTPUtils.EMPTY) + HTTPUtils.CRLF2 + body
     }
 }
 
